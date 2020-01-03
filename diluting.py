@@ -62,13 +62,12 @@ def main():
     res = np.zeros((ysize, xsize), dtype=np.int)
     contours, heriachy = cv.findContours(rasterArray, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_NONE) # RETR_EXTERNAL RETR_TREE RETR_FLOODFILL  RETR_EXTERNAL
 
-    # img = cv.imread("D:/MSPA/i2.tif") #cv.IMREAD_LOAD_GDAL
-    # cv.imwrite('origin.jpg', img)
     for n, contour in enumerate(contours):
         for i in range(contour.shape[0]):
             res[int(contour[i][0][1])][int(contour[i][0][0])] = 1
+            # cv.fillPoly(res, pts=contour, color=(255,255,255))
 
-    # cv.drawContours(img, contours, 971, (0, 0, 255), 2)
+    # cv.drawContours(res, contours, -1, (255, 255, 255), thickness=cv.FILLED)
     # cv.imwrite('contours.jpg', img)
     array2raster('result2.tif', 'D:/MSPA/i2.tif', res, gdal.GDT_Byte)
 
@@ -80,29 +79,31 @@ def main():
 
     # 根据栅格边缘提取对应矩阵元素位置
     src = rasterio.open("result2.tif")
+    visited = []
     with fiona.open("POLYGONIZED_STUFF.shp", "r") as shapefile:
         shapes = [feature["geometry"] for feature in shapefile]
-        jshapes = shapes.copy()
-
+        # jshapes = shapes.copy()
         res_array = np.zeros_like(costSurfaceArray)
 
-        i = 0
-        while len(shapes) > 0:
-            shape = shapes.pop(0)
+        for i in range(len(shapes)):
+            # shape = shapes.pop(0)
+            visited.append(i)
 
-            start_image, start_transform = mask(src, [shape], crop=False)
+            start_image, start_transform = mask(src, [shapes[i]], crop=False)
             no_data = src.nodata
             start_row, start_col = np.where(start_image[0] != no_data)
             if len(start_row) == 0:
                 continue
 
-            for j in range(len(jshapes)):
+            for j in range(len(shapes)):
                 if i == j:
                     continue
-                if j != 557:
+                if j in visited:
                     continue
+                # if j != 557:
+                #     continue
 
-                end_image, end_transform = mask(src, [jshapes[j]], crop=False)
+                end_image, end_transform = mask(src, [shapes[j]], crop=False)
                 no_data = src.nodata
                 end_row, end_col = np.where(end_image[0] != no_data)
                 if len(end_row) == 0:
@@ -111,14 +112,17 @@ def main():
                 minWeight = sys.maxsize
                 minPathArray = []
 
-                start_sep = diluting(start_row, 1)
-                end_sep = diluting(end_row, 1)
-                for m in range(int(len(start_row) / start_sep) + 1):
-                    startCoord = (start_row[m * start_sep - 1], start_col[m * start_sep - 1])
-                    for n in range(int(len(end_row) / end_sep) + 1):
-                        endCoord = (end_row[n * end_sep - 1], end_col[n * end_sep - 1])
+                # start_sep = diluting(start_row, 1)
+                # end_sep = diluting(end_row, 1)
+                for m in range(int(len(start_row) / 1000) + 1):
+                    startCoord = (start_row[m * 1000 - 1], start_col[m * 1000 - 1])
+                    for n in range(int(len(end_row) / 1000) + 1):
+                        endCoord = (end_row[n * 1000 - 1], end_col[n * 1000 - 1])
 
+                        start = time.time()
                         pathArray, weight = createPath(CostSurfacefn, costSurfaceArray, startCoord, endCoord)  # creates path array
+                        end = time.time()
+                        print("Execution Time: ", end - start)
 
                         if weight < 0:
                             continue
@@ -136,8 +140,6 @@ def main():
                     res_array[res_array > 0] = 1
                     array2raster(outputPathfn, CostSurfacefn, res_array, gdal.GDT_Byte)
 
-            i = i + 1
-
         array2raster(outputPathfn, CostSurfacefn, res_array, gdal.GDT_Byte)  # converts path array to raster
 
     print("Over")
@@ -145,7 +147,7 @@ def main():
 
 def diluting(num, iMax):
     if len(num) / 1000 > iMax:
-        sep = int(len(num) / 1000)
+        sep = len(num)
     else:
         sep = 1000
 

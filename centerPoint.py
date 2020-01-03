@@ -5,54 +5,28 @@ from shapely.geometry import shape
 from shapely.wkt import dumps, loads
 from skimage import measure, io
 from skimage.graph import route_through_array
-import matplotlib.pyplot as plt
 import cv2 as cv
-from rasterio.mask import mask
-import rasterio
 import fiona
 import time
-import copy
+import csv
+import rasterio
+from rasterio.mask import mask
 
 def main():
-    dataset = gdal.Open("D:/MSPA/i2.tif")
+    input_path = "D:/MSPA/i2.tif"
+    input_dataset = gdal.Open(input_path)
+    CostSurfacefn_path = 'D:\MSPA\\cost_background.tif'
+    oCostfn_path = 'D:\MSPA\\cost_test.tif'  # 'D:\MSPA\\background4.tif' background4.tif D:\MSPA\\cost_test1.tif
+    oCost_dataset = gdal.Open(oCostfn_path)
+    outputPathfn_path = 'res_Path.tif'
 
-    srcband = dataset.GetRasterBand(1)
-    projectionfrom = dataset.GetProjection()
-    geotransform = dataset.GetGeoTransform()
+    srcband = input_dataset.GetRasterBand(1)
+    projectionfrom = input_dataset.GetProjection()
+    geotransform = input_dataset.GetGeoTransform()
     xsize = srcband.XSize
     ysize = srcband.YSize
 
     rasterArray = srcband.ReadAsArray()
-
-    gtiff = gdal.GetDriverByName('GTiff')
-    output_dataset = gtiff.Create('ttt.tif', xsize, ysize, 2, gdal.GDT_Byte)
-    output_dataset.SetProjection(projectionfrom)
-    output_dataset.SetGeoTransform(geotransform)
-
-    # 修改掩膜
-    # rasterArray[rasterArray == 1] = 2
-    # rasterArray[rasterArray == 0] = 1
-    # rasterArray[rasterArray == 2] = 0
-    output_dataset.GetRasterBand(1).WriteArray(rasterArray)
-    output_dataset.GetRasterBand(2).SetNoDataValue(0) # 只能在创建的时候使用
-    output_dataset.GetRasterBand(2).WriteArray(rasterArray)  # mask图层
-    output_dataset.FlushCache()
-
-    res_dataset = gdal.Open("ttt.tif")
-    out_band = res_dataset.GetRasterBand(1)
-    dst_layername = "POLYGONIZED_STUFF"
-    drv = ogr.GetDriverByName("ESRI Shapefile")
-    dst_ds = drv.CreateDataSource(dst_layername + ".shp")
-    dst_layer = dst_ds.CreateLayer(dst_layername, srs=None)
-    # dst_layer.CreateField(ogr.FieldDefn('v', ogr.OFTInteger))
-
-    gdal.Polygonize(out_band, res_dataset.GetRasterBand(2), dst_layer, -1, [], callback=None)
-    dst_ds.Destroy()
-
-    driver = ogr.GetDriverByName('ESRI Shapefile')
-    dataSource = driver.Open('POLYGONIZED_STUFF.shp', 0)
-    layer = dataSource.GetLayer(0)
-    print(layer.GetFeatureCount())
 
     # 提取轮廓
     dataset = gdal.Open("D:/MSPA/i2.tif")
@@ -60,99 +34,96 @@ def main():
     rasterArray = srcband.ReadAsArray()
 
     res = np.zeros((ysize, xsize), dtype=np.int)
-    contours, heriachy = cv.findContours(rasterArray, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_NONE) # RETR_EXTERNAL RETR_TREE RETR_FLOODFILL  RETR_EXTERNAL
+    contours, heriachy = cv.findContours(rasterArray, cv.RETR_EXTERNAL,
+                                         cv.CHAIN_APPROX_NONE)  # RETR_EXTERNAL RETR_TREE RETR_FLOODFILL  RETR_EXTERNAL
 
-    # img = cv.imread("D:/MSPA/i2.tif") #cv.IMREAD_LOAD_GDAL
-    # cv.imwrite('origin.jpg', img)
-    for n, contour in enumerate(contours):
-        for i in range(contour.shape[0]):
-            res[int(contour[i][0][1])][int(contour[i][0][0])] = 1
+    cv.drawContours(res, contours, -1, (255, 255, 255), thickness=cv.FILLED)
+    res[res == 255] = 1
+    array2raster('No_Hole_Raster.tif', 'D:/MSPA/i2.tif', res, gdal.GDT_Byte)
 
-    # cv.drawContours(img, contours, 971, (0, 0, 255), 2)
-    # cv.imwrite('contours.jpg', img)
-    array2raster('result2.tif', 'D:/MSPA/i2.tif', res, gdal.GDT_Byte)
+    # 提取矢量多边形
+    res_dataset = gdal.Open("No_Hole_Raster.tif")
+    out_band = res_dataset.GetRasterBand(1)
+    dst_layername = "No_Hole_Poly"
+    drv = ogr.GetDriverByName("ESRI Shapefile")
+    dst_ds = drv.CreateDataSource(dst_layername + ".shp")
+    dst_layer = dst_ds.CreateLayer(dst_layername, srs=None)
+
+    gdal.Polygonize(out_band, res_dataset.GetRasterBand(1), dst_layer, -1, [], callback=None)
+    dst_ds.Destroy()
+
+    # # 修改背景图层栅格值
+    # src = rasterio.open("oCostfn_path.tif")
+    # with fiona.open("No_Hole_Raster.shp", "r") as shapefile:
+    #     shapes = [feature["geometry"] for feature in shapefile]
+    #     # srcband = oCost_dataset.GetRasterBand(1)
+    #     # rasterArray = srcband.ReadAsArray()
+    #     img, transform = mask(src, shapes, crop=False)
+    #
+    # gtiff = gdal.GetDriverByName('GTiff')
+    # output_dataset = gtiff.Create(CostSurfacefn_path, xsize, ysize, 2, gdal.GDT_Byte)
+    # output_dataset.SetProjection(projectionfrom)
+    # output_dataset.SetGeoTransform(geotransform)
+
+    # # rasterArray[rasterArray == 2] = 0
+    # output_dataset.GetRasterBand(1).WriteArray(rasterArray)
+    # output_dataset.GetRasterBand(2).SetNoDataValue(0)  # 只能在创建的时候使用
+    # output_dataset.GetRasterBand(2).WriteArray(rasterArray)  # mask图层
+    # output_dataset.FlushCache()
 
     # 两个像素点之间的最短路径
-    CostSurfacefn = 'D:\MSPA\\cost_test.tif' #'D:\MSPA\\background4.tif' background4.tif D:\MSPA\\cost_test1.tif
-    outputPathfn = 'Path2.tif'
 
-    costSurfaceArray = raster2array(CostSurfacefn)  # creates array from cost surface raster
+    costSurfaceArray = raster2array(oCost_dataset)  # creates array from cost surface raster
 
-    # 根据栅格边缘提取对应矩阵元素位置
-    src = rasterio.open("result2.tif")
-    with fiona.open("POLYGONIZED_STUFF.shp", "r") as shapefile:
+    # 根据多边形中心点提取对应矩阵元素位置
+    # src = rasterio.open(input_path)
+    visited = []
+    with fiona.open("No_Hole_Poly.shp", "r") as shapefile:
         shapes = [feature["geometry"] for feature in shapefile]
-        jshapes = shapes.copy()
-
         res_array = np.zeros_like(costSurfaceArray)
 
-        i = 0
-        while len(shapes) > 0:
-            shape = shapes.pop(0)
+        with open("result.csv", 'w', newline="") as out_csv:
+            csvwriter = csv.writer(out_csv)
 
-            start_image, start_transform = mask(src, [shape], crop=False)
-            no_data = src.nodata
-            start_row, start_col = np.where(start_image[0] != no_data)
-            if len(start_row) == 0:
-                continue
+            for i in range(len(shapes)):
+                visited.append(i)
 
-            for j in range(len(jshapes)):
-                if i == j:
-                    continue
-                if j != 557:
-                    continue
+                for j in range(len(shapes)):
+                    if i == j:
+                        continue
+                    if j in visited:
+                        continue
+                    # if j != 42:
+                    #     continue
 
-                end_image, end_transform = mask(src, [jshapes[j]], crop=False)
-                no_data = src.nodata
-                end_row, end_col = np.where(end_image[0] != no_data)
-                if len(end_row) == 0:
-                    continue
+                    start_point = shape(shapes[i]).representative_point()
+                    end_point = shape(shapes[j]).representative_point()
+                    startCoord = coord2pixelOffset(oCost_dataset, start_point.x, start_point.y)
+                    endCoord = coord2pixelOffset(oCost_dataset, end_point.x, end_point.y)
 
-                minWeight = sys.maxsize
-                minPathArray = []
+                    # start = time.time()
+                    minPathArray, weight = createPath(CostSurfacefn_path, costSurfaceArray, startCoord, endCoord)  # creates path array
+                    # end = time.time()
+                    # print("Execution Time: ", end - start)
 
-                start_sep = diluting(start_row, 1)
-                end_sep = diluting(end_row, 1)
-                for m in range(int(len(start_row) / start_sep) + 1):
-                    startCoord = (start_row[m * start_sep - 1], start_col[m * start_sep - 1])
-                    for n in range(int(len(end_row) / end_sep) + 1):
-                        endCoord = (end_row[n * end_sep - 1], end_col[n * end_sep - 1])
+                    if len(minPathArray) > 0:
+                        res_array = minPathArray + res_array
 
-                        pathArray, weight = createPath(CostSurfacefn, costSurfaceArray, startCoord, endCoord)  # creates path array
+                    csvwriter.writerow([str(i), str(j), str(weight)])
+                    out_csv.flush()
+                    print(str(i) + "," + str(j))
 
-                        if weight < 0:
-                            continue
+                    if i == 1 and j == 500:
+                        res_array[res_array > 0] = 1
+                        array2raster(outputPathfn_path, CostSurfacefn_path, res_array, gdal.GDT_Byte)
 
-                        if weight < minWeight:
-                            minWeight = weight
-                            minPathArray = pathArray
-
-                if minWeight < sys.maxsize:
-                    res_array = minPathArray + res_array
-
-                print(str(i) + "," + str(j))
-
-                if i == 0 and j == 555:
-                    res_array[res_array > 0] = 1
-                    array2raster(outputPathfn, CostSurfacefn, res_array, gdal.GDT_Byte)
-
-            i = i + 1
-
-        array2raster(outputPathfn, CostSurfacefn, res_array, gdal.GDT_Byte)  # converts path array to raster
+            array2raster(outputPathfn_path, CostSurfacefn_path, res_array, gdal.GDT_Byte)  # converts path array to raster
+            out_csv.close()
 
     print("Over")
 
 
-def diluting(num, iMax):
-    if len(num) / 1000 > iMax:
-        sep = int(len(num) / 1000)
-    else:
-        sep = 1000
-
-    return sep
-
-def raster2array(rasterfn):
-    raster = gdal.Open(rasterfn)
+def raster2array(raster):
     band = raster.GetRasterBand(1)
     noDataValue = band.GetNoDataValue()
     # rasterArray[rasterArray == noDataValue] = newValue
@@ -160,8 +131,8 @@ def raster2array(rasterfn):
     return array
 
 
-def coord2pixelOffset(rasterfn, x, y):
-    raster = gdal.Open(rasterfn)
+def coord2pixelOffset(raster, x, y):
+    # raster = gdal.Open(rasterfn)
     geotransform = raster.GetGeoTransform()
     originX = geotransform[0]
     originY = geotransform[3]
@@ -169,7 +140,8 @@ def coord2pixelOffset(rasterfn, x, y):
     pixelHeight = geotransform[5]
     xOffset = int((x - originX) / pixelWidth)
     yOffset = int((y - originY) / pixelHeight)
-    return xOffset, yOffset
+    return yOffset, xOffset
+
 
 def array2raster(newRasterfn, rasterfn, array, datatype):
     raster = gdal.Open(rasterfn)
@@ -207,7 +179,7 @@ def createPath(CostSurfacefn, costSurfaceArray, startCoord, endCoord):
     # create path
     try:
         indices, weight = route_through_array(costSurfaceArray, (startCoordX, startCoordY), (endCoordX, endCoordY),
-                                              geometric=True, fully_connected=True)
+                                              geometric=False, fully_connected=True)
         indices = np.array(indices).T
         path = np.zeros_like(costSurfaceArray)
         path[indices[0], indices[1]] = 1
@@ -215,7 +187,6 @@ def createPath(CostSurfacefn, costSurfaceArray, startCoord, endCoord):
         return [], -1
     else:
         return path, weight
-
 
 
 if __name__ == "__main__":

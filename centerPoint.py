@@ -13,12 +13,12 @@ import rasterio
 from rasterio.mask import mask
 
 def main():
-    input_path = "D:/MSPA/i2.tif"
+    input_path = "D:\\MSPA\\i2.tif"
     input_dataset = gdal.Open(input_path)
-    CostSurfacefn_path = 'D:\MSPA\\cost_background.tif'
-    oCostfn_path = 'D:\MSPA\\cost_test.tif'  # 'D:\MSPA\\background4.tif' background4.tif D:\MSPA\\cost_test1.tif
-    oCost_dataset = gdal.Open(oCostfn_path)
-    outputPathfn_path = 'res_Path.tif'
+    CostSurfacefn_path = 'D:\\MSPA\\cost_background.tif'
+    oCostfn_path = 'D:\\MSPA\\cost_test1.tif'  # 'D:\MSPA\\background4.tif' background4.tif D:\MSPA\\cost_test1.tif
+    oCost_dataset = gdal.Open(oCostfn_path, gdal.GDT_Float32)
+    outputPathfn_path = 'res\\res_Path.tif'
 
     srcband = input_dataset.GetRasterBand(1)
     projectionfrom = input_dataset.GetProjection()
@@ -26,9 +26,7 @@ def main():
     xsize = srcband.XSize
     ysize = srcband.YSize
 
-    rasterArray = srcband.ReadAsArray()
-
-    # 提取轮廓
+    # 提取轮廓，把空洞填充
     dataset = gdal.Open("D:/MSPA/i2.tif")
     srcband = dataset.GetRasterBand(1)
     rasterArray = srcband.ReadAsArray()
@@ -39,12 +37,12 @@ def main():
 
     cv.drawContours(res, contours, -1, (255, 255, 255), thickness=cv.FILLED)
     res[res == 255] = 1
-    array2raster('No_Hole_Raster.tif', 'D:/MSPA/i2.tif', res, gdal.GDT_Byte)
+    array2raster('res/No_Hole_Raster.tif', 'D:/MSPA/i2.tif', res, gdal.GDT_Byte, 0)
 
     # 提取矢量多边形
-    res_dataset = gdal.Open("No_Hole_Raster.tif")
+    res_dataset = gdal.Open("res/No_Hole_Raster.tif")
     out_band = res_dataset.GetRasterBand(1)
-    dst_layername = "No_Hole_Poly"
+    dst_layername = "res/No_Hole_Poly"
     drv = ogr.GetDriverByName("ESRI Shapefile")
     dst_ds = drv.CreateDataSource(dst_layername + ".shp")
     dst_layer = dst_ds.CreateLayer(dst_layername, srs=None)
@@ -52,37 +50,39 @@ def main():
     gdal.Polygonize(out_band, res_dataset.GetRasterBand(1), dst_layer, -1, [], callback=None)
     dst_ds.Destroy()
 
-    # # 修改背景图层栅格值
-    # src = rasterio.open("oCostfn_path.tif")
-    # with fiona.open("No_Hole_Raster.shp", "r") as shapefile:
-    #     shapes = [feature["geometry"] for feature in shapefile]
-    #     # srcband = oCost_dataset.GetRasterBand(1)
-    #     # rasterArray = srcband.ReadAsArray()
-    #     img, transform = mask(src, shapes, crop=False)
-    #
-    # gtiff = gdal.GetDriverByName('GTiff')
-    # output_dataset = gtiff.Create(CostSurfacefn_path, xsize, ysize, 2, gdal.GDT_Byte)
-    # output_dataset.SetProjection(projectionfrom)
-    # output_dataset.SetGeoTransform(geotransform)
+    # 修改背景图层栅格值
+    srcband = oCost_dataset.GetRasterBand(1)
+    rasterArray = srcband.ReadAsArray().astype(np.float)
+    rasterArray[rasterArray == 0] = 0.5
 
-    # # rasterArray[rasterArray == 2] = 0
-    # output_dataset.GetRasterBand(1).WriteArray(rasterArray)
-    # output_dataset.GetRasterBand(2).SetNoDataValue(0)  # 只能在创建的时候使用
-    # output_dataset.GetRasterBand(2).WriteArray(rasterArray)  # mask图层
-    # output_dataset.FlushCache()
+    with fiona.open("res/No_Hole_Poly.shp", "r") as shapefile:
+        src = rasterio.open(oCostfn_path)
+        no_data = src.nodata
+        shapes = [feature["geometry"] for feature in shapefile]
+        img, transform = mask(src, shapes, crop=False)
+        row, col = np.where(img[0] != no_data)
+
+        # res_array = np.zeros_like(rasterArray)
+        np.put(rasterArray, [row*xsize+col], 0.1)
+
+        # out_meta = src.meta
+        # with rasterio.open("RGB.byte.masked.tif", "w", **out_meta) as dest:
+        #     dest.write(img)
+
+        array2raster(CostSurfacefn_path, input_path, rasterArray, gdal.GDT_Float32, no_data)
+        Cost_dataset = gdal.Open(CostSurfacefn_path)
+        costSurfaceArray = raster2array(Cost_dataset)  # creates array from cost surface raster
 
     # 两个像素点之间的最短路径
-
-    costSurfaceArray = raster2array(oCost_dataset)  # creates array from cost surface raster
 
     # 根据多边形中心点提取对应矩阵元素位置
     # src = rasterio.open(input_path)
     visited = []
-    with fiona.open("No_Hole_Poly.shp", "r") as shapefile:
+    with fiona.open("res/No_Hole_Poly.shp", "r") as shapefile:
         shapes = [feature["geometry"] for feature in shapefile]
         res_array = np.zeros_like(costSurfaceArray)
 
-        with open("result.csv", 'w', newline="") as out_csv:
+        with open("res/result.csv", 'w', newline="") as out_csv:
             csvwriter = csv.writer(out_csv)
 
             for i in range(len(shapes)):
@@ -113,15 +113,12 @@ def main():
                     out_csv.flush()
                     print(str(i) + "," + str(j))
 
-                    if i == 1 and j == 500:
+                    if i == 11 and j == 100:
                         res_array[res_array > 0] = 1
-                        array2raster(outputPathfn_path, CostSurfacefn_path, res_array, gdal.GDT_Byte)
+                        array2raster(outputPathfn_path, CostSurfacefn_path, res_array, gdal.GDT_Byte, 0)
 
-            array2raster(outputPathfn_path, CostSurfacefn_path, res_array, gdal.GDT_Byte)  # converts path array to raster
+            array2raster(outputPathfn_path, CostSurfacefn_path, res_array, gdal.GDT_Byte, 0)  # converts path array to raster
             out_csv.close()
-
-    print("Over")
-
 
 def raster2array(raster):
     band = raster.GetRasterBand(1)
@@ -143,7 +140,7 @@ def coord2pixelOffset(raster, x, y):
     return yOffset, xOffset
 
 
-def array2raster(newRasterfn, rasterfn, array, datatype):
+def array2raster(newRasterfn, rasterfn, array, datatype, nodata):
     raster = gdal.Open(rasterfn)
     geotransform = raster.GetGeoTransform()
     originX = geotransform[0]
@@ -157,7 +154,7 @@ def array2raster(newRasterfn, rasterfn, array, datatype):
     outRaster = driver.Create(newRasterfn, cols, rows, 1, datatype)
     outRaster.SetGeoTransform((originX, pixelWidth, 0, originY, 0, pixelHeight))
     outband = outRaster.GetRasterBand(1)
-    outband.SetNoDataValue(0)
+    outband.SetNoDataValue(nodata)
     outband.WriteArray(array)
     outRasterSRS = osr.SpatialReference()
     outRasterSRS.ImportFromWkt(raster.GetProjectionRef())
@@ -193,3 +190,4 @@ if __name__ == "__main__":
     gdal.AllRegister()
     gdal.UseExceptions()
     main()
+    print("Over")

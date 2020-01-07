@@ -11,6 +11,8 @@ import time
 import csv
 import rasterio
 from rasterio.mask import mask
+from skimage.graph import MCP, MCP_Geometric, MCP_Connect, MCP_Flexible
+
 
 def main():
     input_path = "D:\\MSPA\\i2.tif"
@@ -63,7 +65,7 @@ def main():
         row, col = np.where(img[0] != no_data)
 
         # res_array = np.zeros_like(rasterArray)
-        np.put(rasterArray, [row*xsize+col], 0.1)
+        np.put(rasterArray, [row * xsize + col], 0.1)
 
         # out_meta = src.meta
         # with rasterio.open("RGB.byte.masked.tif", "w", **out_meta) as dest:
@@ -86,23 +88,28 @@ def main():
             csvwriter = csv.writer(out_csv)
 
             for i in range(len(shapes)):
-                visited.append(i)
+                start_point = shape(shapes[i]).representative_point()
+                startCoord = coord2pixelOffset(oCost_dataset, start_point.x, start_point.y)
 
-                for j in range(len(shapes)):
+                mcp_class = MCP
+                m = mcp_class(costSurfaceArray, fully_connected=True)
+                costs, traceback_array = m.find_costs([startCoord])  # 直接计算从源点出发到其他所有点的最短路径
+
+                for j in range(i, len(shapes)):
                     if i == j:
-                        continue
-                    if j in visited:
                         continue
                     # if j != 42:
                     #     continue
-
-                    start_point = shape(shapes[i]).representative_point()
                     end_point = shape(shapes[j]).representative_point()
-                    startCoord = coord2pixelOffset(oCost_dataset, start_point.x, start_point.y)
                     endCoord = coord2pixelOffset(oCost_dataset, end_point.x, end_point.y)
 
                     # start = time.time()
-                    minPathArray, weight = createPath(CostSurfacefn_path, costSurfaceArray, startCoord, endCoord)  # creates path array
+                    weight = costs[endCoord]
+                    indices = m.traceback(endCoord)
+                    indices = np.array(indices).T
+                    minPathArray = np.zeros_like(costSurfaceArray)
+                    minPathArray[indices[0], indices[1]] = 1
+
                     # end = time.time()
                     # print("Execution Time: ", end - start)
 
@@ -113,12 +120,15 @@ def main():
                     out_csv.flush()
                     print(str(i) + "," + str(j))
 
-                    if i == 11 and j == 100:
+                    if i == 0 and j == 100:
                         res_array[res_array > 0] = 1
                         array2raster(outputPathfn_path, CostSurfacefn_path, res_array, gdal.GDT_Byte, 0)
 
-            array2raster(outputPathfn_path, CostSurfacefn_path, res_array, gdal.GDT_Byte, 0)  # converts path array to raster
+            res_array[res_array == 0] = 1
+            array2raster(outputPathfn_path, CostSurfacefn_path, res_array, gdal.GDT_Byte,
+                         0)  # converts path array to raster
             out_csv.close()
+
 
 def raster2array(raster):
     band = raster.GetRasterBand(1)
@@ -175,11 +185,16 @@ def createPath(CostSurfacefn, costSurfaceArray, startCoord, endCoord):
 
     # create path
     try:
+
         indices, weight = route_through_array(costSurfaceArray, (startCoordX, startCoordY), (endCoordX, endCoordY),
                                               geometric=False, fully_connected=True)
+
+        # start = time.time()
         indices = np.array(indices).T
         path = np.zeros_like(costSurfaceArray)
         path[indices[0], indices[1]] = 1
+        # end = time.time()
+        # print("Execution Time: ", end - start)
     except Exception as e:
         return [], -1
     else:

@@ -64,12 +64,7 @@ def main():
         img, transform = mask(src, shapes, crop=False)
         row, col = np.where(img[0] != no_data)
 
-        # res_array = np.zeros_like(rasterArray)
-        np.put(rasterArray, [row * xsize + col], 0.1)
-
-        # out_meta = src.meta
-        # with rasterio.open("RGB.byte.masked.tif", "w", **out_meta) as dest:
-        #     dest.write(img)
+        np.put(rasterArray, [row * xsize + col], 0.1)  # 赋值
 
         array2raster(CostSurfacefn_path, input_path, rasterArray, gdal.GDT_Float32, no_data)
         Cost_dataset = gdal.Open(CostSurfacefn_path)
@@ -78,8 +73,6 @@ def main():
     # 两个像素点之间的最短路径
 
     # 根据多边形中心点提取对应矩阵元素位置
-    # src = rasterio.open(input_path)
-    visited = []
     with fiona.open("res/No_Hole_Poly.shp", "r") as shapefile:
         shapes = [feature["geometry"] for feature in shapefile]
         res_array = np.zeros_like(costSurfaceArray)
@@ -125,8 +118,7 @@ def main():
                         array2raster(outputPathfn_path, CostSurfacefn_path, res_array, gdal.GDT_Byte, 0)
 
             res_array[res_array == 0] = 1
-            array2raster(outputPathfn_path, CostSurfacefn_path, res_array, gdal.GDT_Byte,
-                         0)  # converts path array to raster
+            array2raster(outputPathfn_path, CostSurfacefn_path, res_array, gdal.GDT_Byte, 0)
             out_csv.close()
 
 

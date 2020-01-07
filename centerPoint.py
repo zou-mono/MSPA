@@ -1,5 +1,5 @@
 import sys
-from osgeo import gdal, gdalnumeric, ogr, osr
+from osgeo import gdal, ogr, osr
 import numpy as np
 from shapely.geometry import shape
 from shapely.wkt import dumps, loads
@@ -9,9 +9,10 @@ import cv2 as cv
 import fiona
 import time
 import csv
+import jsonlines
 import rasterio
 from rasterio.mask import mask
-from skimage.graph import MCP, MCP_Geometric, MCP_Connect, MCP_Flexible
+from skimage.graph import MCP, MCP_Geometric
 
 
 def main():
@@ -21,6 +22,8 @@ def main():
     oCostfn_path = 'D:\\MSPA\\cost_test1.tif'  # 'D:\MSPA\\background4.tif' background4.tif D:\MSPA\\cost_test1.tif
     oCost_dataset = gdal.Open(oCostfn_path, gdal.GDT_Float32)
     outputPathfn_path = 'res\\res_Path.tif'
+    outputPathfn_path1 = 'res\\res_Path1.tif'
+    outputData_Path = "res\\result.jsonl"
 
     srcband = input_dataset.GetRasterBand(1)
     projectionfrom = input_dataset.GetProjection()
@@ -39,6 +42,7 @@ def main():
 
     cv.drawContours(res, contours, -1, (255, 255, 255), thickness=cv.FILLED)
     res[res == 255] = 1
+
     array2raster('res/No_Hole_Raster.tif', 'D:/MSPA/i2.tif', res, gdal.GDT_Byte, 0)
 
     # 提取矢量多边形
@@ -55,7 +59,7 @@ def main():
     # 修改背景图层栅格值
     srcband = oCost_dataset.GetRasterBand(1)
     rasterArray = srcband.ReadAsArray().astype(np.float)
-    rasterArray[rasterArray == 0] = 0.5
+    rasterArray[rasterArray == 0] = 0.5  # 空数据设置为0.5，不允许出现0
 
     with fiona.open("res/No_Hole_Poly.shp", "r") as shapefile:
         src = rasterio.open(oCostfn_path)
@@ -64,7 +68,7 @@ def main():
         img, transform = mask(src, shapes, crop=False)
         row, col = np.where(img[0] != no_data)
 
-        np.put(rasterArray, [row * xsize + col], 0.1)  # 赋值
+        np.put(rasterArray, [row * xsize + col], 0.1)  # 绿地斑块赋值为0.1
 
         array2raster(CostSurfacefn_path, input_path, rasterArray, gdal.GDT_Float32, no_data)
         Cost_dataset = gdal.Open(CostSurfacefn_path)
@@ -77,9 +81,11 @@ def main():
         shapes = [feature["geometry"] for feature in shapefile]
         res_array = np.zeros_like(costSurfaceArray)
 
-        with open("res/result.csv", 'w', newline="") as out_csv:
-            csvwriter = csv.writer(out_csv)
-
+        # with open("res/result.csv", 'w', newline="") as out_csv:
+        #     csvwriter = csv.writer(out_csv)
+        res = []
+        # with open(outputData_Path, 'w', encoding='utf-8') as out_json:
+        with jsonlines.open(outputData_Path, mode='w', flush=True) as out_json:
             for i in range(len(shapes)):
                 start_point = shape(shapes[i]).representative_point()
                 startCoord = coord2pixelOffset(oCost_dataset, start_point.x, start_point.y)
@@ -87,6 +93,9 @@ def main():
                 mcp_class = MCP
                 m = mcp_class(costSurfaceArray, fully_connected=True)
                 costs, traceback_array = m.find_costs([startCoord])  # 直接计算从源点出发到其他所有点的最短路径
+
+                # if i != 198:
+                #     continue
 
                 for j in range(i, len(shapes)):
                     if i == j:
@@ -98,8 +107,8 @@ def main():
 
                     # start = time.time()
                     weight = costs[endCoord]
-                    indices = m.traceback(endCoord)
-                    indices = np.array(indices).T
+                    outputPath = m.traceback(endCoord)
+                    indices = np.array(outputPath).T
                     minPathArray = np.zeros_like(costSurfaceArray)
                     minPathArray[indices[0], indices[1]] = 1
 
@@ -109,18 +118,65 @@ def main():
                     if len(minPathArray) > 0:
                         res_array = minPathArray + res_array
 
-                    csvwriter.writerow([str(i), str(j), str(weight)])
-                    out_csv.flush()
+                    outputData = {
+                        "source": i,
+                        "end": j,
+                        "weight": weight,
+                        "shortestPath": outputPath
+                    }
+
+                    out_json.write(outputData)
+
+                    # res.append(outputData)
+                    # outputData = json.dumps(outputData)
+                    # stream_array = StreamArray(outputData)
+                    # for chunk in json.JSONEncoder().iterencode(outputData):
+                    #     out_json.write(chunk)
+
+                    # csvwriter.writerow([str(i), str(j), str(weight)])
+                    # out_csv.flush()
                     print(str(i) + "," + str(j))
 
-                    if i == 0 and j == 100:
+                # outputPathfn_path1 = str(i) + ".tif"
+                # res_array[res_array > 0] = 1
+                # array2raster(outputPathfn_path1, CostSurfacefn_path, res_array, gdal.GDT_Byte, 0)
+
+                    if i == 0 and j == 1242:
+                        array2raster(outputPathfn_path, CostSurfacefn_path, res_array, gdal.GDT_Int32, 0)
                         res_array[res_array > 0] = 1
-                        array2raster(outputPathfn_path, CostSurfacefn_path, res_array, gdal.GDT_Byte, 0)
+                        array2raster(outputPathfn_path1, CostSurfacefn_path, res_array, gdal.GDT_Byte, 0)
 
-            res_array[res_array == 0] = 1
-            array2raster(outputPathfn_path, CostSurfacefn_path, res_array, gdal.GDT_Byte, 0)
-            out_csv.close()
+            array2raster(outputPathfn_path, CostSurfacefn_path, res_array, gdal.GDT_Int32, 0)
+            res_array[res_array > 0] = 1
+            array2raster(outputPathfn_path1, CostSurfacefn_path, res_array, gdal.GDT_Byte, 0)
+            # out_json.write(json.dumps(res))
+            # out_json.close()
+            # out_csv.close()
 
+class StreamArray(list):
+    """
+    Converts a generator into a list object that can be json serialisable
+    while still retaining the iterative nature of a generator.
+
+    IE. It converts it to a list without having to exhaust the generator
+    and keep its contents in memory.
+    """
+    def __init__(self,generator):
+        self.generator = generator
+        self._len = 1
+
+    def __iter__(self):
+        self._len = 0
+        for item in self.generator:
+            yield item
+            self._len += 1
+
+    def __len__(self):
+        """
+        Json parser looks for a this method to confirm whether or not it can
+        be parsed
+        """
+        return self._len
 
 def raster2array(raster):
     band = raster.GetRasterBand(1)

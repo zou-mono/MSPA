@@ -195,6 +195,8 @@ def jsonlines2shapefile(json_path):
                     ('end', obj['end']),
                     ('weight', obj['weight'])])
             })
+            icount = icount + 1
+            print(icount)
 
     output_sp.close()
 
@@ -203,6 +205,7 @@ def geometry_linestring(Paths):
     t = map(lambda path: pixelOffset2coord(input_dataset, path[1], path[0]), Paths)
     # m = map(lambda x, y: x + y, [1, 3, 5, 7, 9], [2, 4, 6, 8, 10])
     t = LineString(list(t))
+    t = t.simplify(36)
     return mapping(t)
 
 
@@ -292,5 +295,6 @@ def createPath(CostSurfacefn, costSurfaceArray, startCoord, endCoord):
 if __name__ == "__main__":
     gdal.AllRegister()
     gdal.UseExceptions()
-    main()
+    # main()
+    jsonlines2shapefile("res\\0108result.jsonl")
     print("Over")

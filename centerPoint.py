@@ -1,32 +1,37 @@
-import sys
+import click
 from osgeo import gdal, ogr, osr
 import numpy as np
 from shapely.geometry import shape, LineString, mapping
-from shapely.wkt import dumps, loads
-from skimage import measure, io
 from skimage.graph import route_through_array
 import cv2 as cv
 import fiona
 from collections import OrderedDict
 import time
-import csv
 import jsonlines
 import rasterio
 from rasterio.mask import mask
 from skimage.graph import MCP, MCP_Geometric
 
-input_path = "D:\\MSPA\\2018输入数据.tif"
-input_dataset = gdal.Open(input_path)
-CostSurfacefn_path = 'D:\\MSPA\\cost_background.tif'
-oCostfn_path = 'D:\\MSPA\\cost_test1.tif'  # 'D:\MSPA\\background4.tif' background4.tif D:\MSPA\\cost_test1.tif
-oCost_dataset = gdal.Open(oCostfn_path, gdal.GDT_Float32)
+# input_path = "data\\2018输入数据2.tif"
+CostSurfacefn_path = 'res\\cost_background.tif'
+# Costfn_path = 'data\\cost_test2.tif'  # 'D:\MSPA\\background4.tif' background4.tif D:\MSPA\\cost_test1.tif
 outputPathfn_path = 'res\\res_Path.tif'
 outputPathfn_path1 = 'res\\res_Path1.tif'
 outputData_Path = "res\\result.jsonl"
 outputPath_shape = "res\\res_sp.shp"
 
+@click.command()
+@click.option('--input-path', '-i',
+             help='Input File, need the full path. For example, data\\2018输入数据2.tif',
+             required=True)
+@click.option(
+    '--cost-path', '-c',
+    help='Background File contains cost matrix, need the full path.',
+    required=True)
+def main(input_path, cost_path):
+    input_dataset = gdal.Open(input_path)
+    Cost_dataset = gdal.Open(cost_path, gdal.GDT_Float32)
 
-def main():
     srcband = input_dataset.GetRasterBand(1)
     # projectionfrom = input_dataset.GetProjection()
     # geotransform = input_dataset.GetGeoTransform()
@@ -59,21 +64,14 @@ def main():
     dst_ds.Destroy()
 
     # 修改背景图层栅格值
-    srcband = oCost_dataset.GetRasterBand(1)
+    srcband = Cost_dataset.GetRasterBand(1)
     rasterArray = srcband.ReadAsArray().astype(np.float)
     rasterArray[rasterArray == 0] = 0.5  # 空数据设置为0.5，不允许出现0
 
     with fiona.open("res/No_Hole_Poly.shp", "r") as shapefile:
-        src = rasterio.open(oCostfn_path)
+        src = rasterio.open(cost_path)
         no_data = src.nodata
         shapes = [feature["geometry"] for feature in shapefile]
-
-        # s = filter(lambda x: shape(x).area <= 25000, shapes)  # 用面积过滤矢量图斑
-        # shapes_f = list(s)
-
-        # img, transform = mask(src, shapes_f, crop=False)
-        # row, col = np.where(img[0] != no_data)
-        # np.put(rasterArray, [row * xsize + col], 0.1)  # 面积小于阈值的斑块赋值为0.1
 
         img, transform = mask(src, shapes, crop=False)
         row, col = np.where(img[0] != no_data)
@@ -105,10 +103,10 @@ def main():
             for j in range(i, len(shapes)):
                 if i == j:
                     continue
-                # if j != 42:
+                # if j != 686:
                 #     continue
                 end_point = shape(shapes[j]).representative_point()
-                endCoord = coord2pixelOffset(oCost_dataset, end_point.x, end_point.y)
+                endCoord = coord2pixelOffset(Cost_dataset, end_point.x, end_point.y)
 
                 weight = costs[endCoord]
                 outputPath = m.traceback(endCoord)
@@ -134,7 +132,7 @@ def main():
                 # array2raster(outputPathfn_path1, CostSurfacefn_path, res_array, gdal.GDT_Byte, 0)
 
                 # if i == 0 and j == 10:
-                # jsonlines2shapefile(outputData_Path)
+                #     jsonlines2shapefile(input_dataset, outputData_Path)
                 # array2raster(outputPathfn_path, CostSurfacefn_path, res_array, gdal.GDT_Int32, 0)
                 # res_array[res_array > 0] = 1
                 # array2raster(outputPathfn_path1, CostSurfacefn_path, res_array, gdal.GDT_Byte, 0)
@@ -142,7 +140,7 @@ def main():
         array2raster(outputPathfn_path, CostSurfacefn_path, res_array, gdal.GDT_Int32, 0)
         res_array[res_array > 0] = 1
         array2raster(outputPathfn_path1, CostSurfacefn_path, res_array, gdal.GDT_Byte, 0)
-        jsonlines2shapefile(outputData_Path)
+        jsonlines2shapefile(input_dataset, outputData_Path)
 
 
 class StreamArray(list):
@@ -172,7 +170,7 @@ class StreamArray(list):
         return self._len
 
 
-def jsonlines2shapefile(json_path):
+def jsonlines2shapefile(input_dataset, json_path):
     schema = {
         'geometry': 'LineString',
         'properties': OrderedDict([
@@ -188,7 +186,7 @@ def jsonlines2shapefile(json_path):
         icount = 0
         for obj in in_json:
             output_sp.write({
-                'geometry': geometry_linestring(obj['shortestPath']),
+                'geometry': geometry_linestring(input_dataset, obj['shortestPath']),
                 'properties': OrderedDict([
                     ('id', icount),
                     ('source', obj['source']),
@@ -201,7 +199,7 @@ def jsonlines2shapefile(json_path):
     output_sp.close()
 
 
-def geometry_linestring(Paths):
+def geometry_linestring(input_dataset, Paths):
     t = map(lambda path: pixelOffset2coord(input_dataset, path[1], path[0]), Paths)
     # m = map(lambda x, y: x + y, [1, 3, 5, 7, 9], [2, 4, 6, 8, 10])
     t = LineString(list(t))
@@ -214,6 +212,7 @@ def raster2array(raster):
     noDataValue = band.GetNoDataValue()
     # rasterArray[rasterArray == noDataValue] = newValue
     array = band.ReadAsArray()
+    array[(array < 0) | (array > 65535)] = 65536.0
     return array
 
 
@@ -293,8 +292,10 @@ def createPath(CostSurfacefn, costSurfaceArray, startCoord, endCoord):
 
 
 if __name__ == "__main__":
+    start = time.time()
     gdal.AllRegister()
     gdal.UseExceptions()
-    # main()
-    jsonlines2shapefile("res\\0108result.jsonl")
-    print("Over")
+    main()
+    end = time.time()
+    # jsonlines2shapefile("res\\0108result.jsonl")
+    print("Finished! Execution Time: ", end - start)

@@ -55,6 +55,7 @@ fabric.properties
 /data
 /input
 /res
+/archive
 /busSchedule_convert_result
 /bustable_convert_result
 /TEST_DATA

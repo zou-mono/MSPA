@@ -29,6 +29,7 @@ outputPath_shape = "res\\res_sp.shp"
     help='Background File contains cost matrix, need the full path.',
     required=True)
 def main(input_path, cost_path):
+    start = time.time()
     input_dataset = gdal.Open(input_path)
     Cost_dataset = gdal.Open(cost_path, gdal.GDT_Float32)
 
@@ -131,8 +132,8 @@ def main(input_path, cost_path):
                 # res_array[res_array > 0] = 1
                 # array2raster(outputPathfn_path1, CostSurfacefn_path, res_array, gdal.GDT_Byte, 0)
 
-                # if i == 0 and j == 10:
-                #     jsonlines2shapefile(input_dataset, outputData_Path)
+                if i == 0 and j == 10:
+                    jsonlines2shapefile(input_dataset, outputData_Path)
                 # array2raster(outputPathfn_path, CostSurfacefn_path, res_array, gdal.GDT_Int32, 0)
                 # res_array[res_array > 0] = 1
                 # array2raster(outputPathfn_path1, CostSurfacefn_path, res_array, gdal.GDT_Byte, 0)
@@ -142,32 +143,8 @@ def main(input_path, cost_path):
         array2raster(outputPathfn_path1, CostSurfacefn_path, res_array, gdal.GDT_Byte, 0)
         jsonlines2shapefile(input_dataset, outputData_Path)
 
-
-class StreamArray(list):
-    """
-    Converts a generator into a list object that can be json serialisable
-    while still retaining the iterative nature of a generator.
-
-    IE. It converts it to a list without having to exhaust the generator
-    and keep its contents in memory.
-    """
-
-    def __init__(self, generator):
-        self.generator = generator
-        self._len = 1
-
-    def __iter__(self):
-        self._len = 0
-        for item in self.generator:
-            yield item
-            self._len += 1
-
-    def __len__(self):
-        """
-        Json parser looks for a this method to confirm whether or not it can
-        be parsed
-        """
-        return self._len
+    end = time.time()
+    print("Finished! Execution Time: ", end - start)
 
 
 def jsonlines2shapefile(input_dataset, json_path):
@@ -292,10 +269,6 @@ def createPath(CostSurfacefn, costSurfaceArray, startCoord, endCoord):
 
 
 if __name__ == "__main__":
-    start = time.time()
     gdal.AllRegister()
     gdal.UseExceptions()
     main()
-    end = time.time()
-    # jsonlines2shapefile("res\\0108result.jsonl")
-    print("Finished! Execution Time: ", end - start)

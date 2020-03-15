@@ -5,25 +5,26 @@ from shapely.geometry import shape, LineString, mapping
 from skimage.graph import route_through_array
 import cv2 as cv
 import fiona
-from collections import OrderedDict
 import time
 import jsonlines
 import rasterio
 from rasterio.mask import mask
 from skimage.graph import MCP, MCP_Geometric
+from coordHandle import *
 
 # input_path = "data\\2018输入数据2.tif"
-CostSurfacefn_path = 'res\\cost_background.tif'
+CostSurfacefn_path = 'res/cost_background.tif'
 # Costfn_path = 'data\\cost_test2.tif'  # 'D:\MSPA\\background4.tif' background4.tif D:\MSPA\\cost_test1.tif
-outputPathfn_path = 'res\\res_Path.tif'
-outputPathfn_path1 = 'res\\res_Path1.tif'
-outputData_Path = "res\\result.jsonl"
-outputPath_shape = "res\\res_sp.shp"
+outputPathfn_path = 'res/res_Path.tif'
+outputPathfn_path1 = 'res/res_Path1.tif'
+outputData_Path = "res/result.jsonl"
+outputPath_shape = "res/res_sp.shp"
+
 
 @click.command()
 @click.option('--input-path', '-i',
-             help='Input File, need the full path. For example, data\\2018输入数据2.tif',
-             required=True)
+              help='Input File, need the full path. For example, data/2018输入数据2.tif',
+              required=True)
 @click.option(
     '--cost-path', '-c',
     help='Background File contains cost matrix, need the full path.',
@@ -31,7 +32,7 @@ outputPath_shape = "res\\res_sp.shp"
 def main(input_path, cost_path):
     start = time.time()
     input_dataset = gdal.Open(input_path)
-    Cost_dataset = gdal.Open(cost_path, gdal.GDT_Float32)
+    Cost_dataset = gdal.Open(cost_path, gdal.GDT_Float32) # .GDT_Float32
 
     srcband = input_dataset.GetRasterBand(1)
     # projectionfrom = input_dataset.GetProjection()
@@ -44,12 +45,14 @@ def main(input_path, cost_path):
     rasterArray = srcband.ReadAsArray()
     noDataValue = srcband.GetNoDataValue()
     rasterArray[rasterArray == noDataValue] = 0
+    # rasterArray[rasterArray > 0] = 255
 
-    res = np.zeros((ysize, xsize), dtype=np.int)
-    contours, heriachy = cv.findContours(rasterArray, cv.RETR_EXTERNAL,
-                                         cv.CHAIN_APPROX_NONE)  # RETR_EXTERNAL RETR_TREE RETR_FLOODFILL  RETR_EXTERNAL
+    res = np.zeros((ysize, xsize), dtype=np.uint8) # 这里用int有bug
+    # res = np.ones(rasterArray.shape, dtype=np.uint8) * 255
+    contours, heriachy = cv.findContours(rasterArray, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_NONE)  # RETR_EXTERNAL RETR_TREE RETR_FLOODFILL  RETR_EXTERNAL
 
     cv.drawContours(res, contours, -1, (255, 255, 255), thickness=cv.FILLED)
+    # cv.imwrite('contours.jpg', res)
     res[res == 255] = 1
     array2raster('res/No_Hole_Raster.tif', input_path, res, gdal.GDT_Byte, 0)
 
@@ -128,112 +131,20 @@ def main(input_path, cost_path):
                 out_json.write(outputData)
                 print(str(i) + "," + str(j))
 
-                if i == 0 and j == 1:
-                    array2raster(outputPathfn_path, CostSurfacefn_path, res_array, gdal.GDT_Int32, 0)
-                    res_array[res_array > 0] = 1
-                    array2raster(outputPathfn_path1, CostSurfacefn_path, res_array, gdal.GDT_Byte, 0)
-                    jsonlines2shapefile(input_dataset, outputData_Path)
+                ## for debug
+                # if i == 0 and j == 1:
+                #     array2raster(outputPathfn_path, CostSurfacefn_path, res_array, gdal.GDT_Int32, 0)
+                #     res_array[res_array > 0] = 1
+                #     array2raster(outputPathfn_path1, CostSurfacefn_path, res_array, gdal.GDT_Byte, 0)
+                # jsonlines2shapefile(input_dataset, "res/result.jsonl", outputData_Path)
 
         array2raster(outputPathfn_path, CostSurfacefn_path, res_array, gdal.GDT_Int32, 0)
         res_array[res_array > 0] = 1
         array2raster(outputPathfn_path1, CostSurfacefn_path, res_array, gdal.GDT_Byte, 0)
-        jsonlines2shapefile(input_dataset, outputData_Path)
+        # jsonlines2shapefile(input_dataset, outputData_Path, )
 
     end = time.time()
     print("Finished! Execution Time: ", end - start)
-
-
-def jsonlines2shapefile(input_dataset, json_path):
-    schema = {
-        'geometry': 'LineString',
-        'properties': OrderedDict([
-            ('id', 'int'),
-            ('source', 'int'),
-            ('end', 'int'),
-            ('weight', 'float')])
-    }
-
-    output_sp = fiona.open(outputPath_shape, 'w', 'ESRI Shapefile', schema)
-
-    with jsonlines.open(json_path, mode='r') as in_json:
-        icount = 0
-        for obj in in_json:
-            output_sp.write({
-                'geometry': geometry_linestring(input_dataset, obj['shortestPath']),
-                'properties': OrderedDict([
-                    ('id', icount),
-                    ('source', obj['source']),
-                    ('end', obj['end']),
-                    ('weight', obj['weight'])])
-            })
-            icount = icount + 1
-            print(icount)
-
-    output_sp.close()
-
-
-def geometry_linestring(input_dataset, Paths):
-    t = map(lambda path: pixelOffset2coord(input_dataset, path[1], path[0]), Paths)
-    # m = map(lambda x, y: x + y, [1, 3, 5, 7, 9], [2, 4, 6, 8, 10])
-    t = LineString(list(t))
-    t = t.simplify(100)
-    return mapping(t)
-
-
-def raster2array(raster):
-    band = raster.GetRasterBand(1)
-    noDataValue = band.GetNoDataValue()
-    # rasterArray[rasterArray == noDataValue] = newValue
-    array = band.ReadAsArray()
-    array[(array < 0) | (array > 65535)] = 65536.0
-    return array
-
-
-def coord2pixelOffset(raster, x, y):
-    # raster = gdal.Open(rasterfn)
-    geotransform = raster.GetGeoTransform()
-    originX = geotransform[0]
-    originY = geotransform[3]
-    pixelWidth = geotransform[1]
-    pixelHeight = geotransform[5]
-    xOffset = int((x - originX) / pixelWidth)
-    yOffset = int((y - originY) / pixelHeight)
-    return yOffset, xOffset
-
-
-def pixelOffset2coord(raster, xOffset, yOffset):
-    # raster = gdal.Open(rasterfn)
-    geotransform = raster.GetGeoTransform()
-    originX = geotransform[0]
-    originY = geotransform[3]
-    pixelWidth = geotransform[1]
-    pixelHeight = geotransform[5]
-    coordX = originX + pixelWidth * xOffset
-    coordY = originY + pixelHeight * yOffset
-    return coordX, coordY
-
-
-def array2raster(newRasterfn, rasterfn, array, datatype, nodata):
-    raster = gdal.Open(rasterfn)
-    geotransform = raster.GetGeoTransform()
-    originX = geotransform[0]
-    originY = geotransform[3]
-    pixelWidth = geotransform[1]
-    pixelHeight = geotransform[5]
-    cols = array.shape[1]
-    rows = array.shape[0]
-
-    driver = gdal.GetDriverByName('GTiff')
-    outRaster = driver.Create(newRasterfn, cols, rows, 1, datatype)
-    outRaster.SetGeoTransform((originX, pixelWidth, 0, originY, 0, pixelHeight))
-    outband = outRaster.GetRasterBand(1)
-    outband.SetNoDataValue(nodata)
-    outband.WriteArray(array)
-    outRasterSRS = osr.SpatialReference()
-    outRasterSRS.ImportFromWkt(raster.GetProjectionRef())
-    outRaster.SetProjection(outRasterSRS.ExportToWkt())
-    outband.FlushCache()
-    outRaster = None
 
 
 def createPath(CostSurfacefn, costSurfaceArray, startCoord, endCoord):
@@ -268,6 +179,6 @@ if __name__ == "__main__":
     gdal.AllRegister()
     gdal.UseExceptions()
 
-    input_dataset = gdal.Open("data/2018输入数据2.tif")
-    jsonlines2shapefile(input_dataset, "res/result.jsonl")
-    # main()
+    # input_dataset = gdal.Open("data/2018输入数据2.tif")
+    # jsonlines2shapefile(input_dataset, "res/result.jsonl")
+    main()

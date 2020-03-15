@@ -10,6 +10,34 @@ import cv2 as cv
 
 
 def main():
+    #读取图片
+    # img = cv.imread('data/i2.tif')
+    dataset= gdal.Open('data/2018输入数据2.tif') #2018输入数据2
+    srcband = dataset.GetRasterBand(1)
+    xsize = srcband.XSize
+    ysize = srcband.YSize
+
+    rasterArray = srcband.ReadAsArray()
+    rasterArray[rasterArray == 255] = 0
+    rasterArray[rasterArray > 0] = 255
+    #二值化，canny检测
+    # binaryImg = cv.Canny(img,50,200)
+    cv.imwrite('origin.jpg',rasterArray)
+
+    #寻找轮廓
+    #也可以这么写：
+    #binary,contours, hierarchy = cv2.findContours(binaryImg,cv2.RETR_EXTERNAL,cv2.CHAIN_APPROX_SIMPLE)
+    #这样，可以直接用contours表示
+    contours, heriachy = cv.findContours(rasterArray, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_NONE)
+
+    #创建白色幕布
+    temp = np.ones(rasterArray.shape,np.uint8)*255
+    # temp = np.zeros((ysize, xsize), dtype=np.int)
+    #画出轮廓：temp是白色幕布，contours是轮廓，-1表示全画，然后是颜色，厚度
+    cv.drawContours(temp, contours, -1, (0,255,0), 3)
+
+    cv.imwrite("contours.jpg", temp)
+
 
     dataset = gdal.Open("D:/MSPA/i.tif")
     # print(dataset.GetDescription())

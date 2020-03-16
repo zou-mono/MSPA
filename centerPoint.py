@@ -20,6 +20,8 @@ outputPathfn_path1 = 'res\\res_Path1.tif'
 outputData_Path = "res\\result.jsonl"
 outputPath_shape = "res\\res_sp.shp"
 
+simplify_distance = 100 # 道格拉斯普克算法的距离参数
+
 @click.command()
 @click.option('--input-path', '-i',
              help='Input File, need the full path. For example, data\\2018输入数据2.tif',
@@ -128,15 +130,11 @@ def main(input_path, cost_path):
                 out_json.write(outputData)
                 print(str(i) + "," + str(j))
 
-                # outputPathfn_path1 = str(i) + ".tif"
-                # res_array[res_array > 0] = 1
-                # array2raster(outputPathfn_path1, CostSurfacefn_path, res_array, gdal.GDT_Byte, 0)
-
-                if i == 0 and j == 10:
+                if i == 0 and j == 1:
+                    array2raster(outputPathfn_path, CostSurfacefn_path, res_array, gdal.GDT_Int32, 0)
+                    res_array[res_array > 0] = 1
+                    array2raster(outputPathfn_path1, CostSurfacefn_path, res_array, gdal.GDT_Byte, 0)
                     jsonlines2shapefile(input_dataset, outputData_Path)
-                # array2raster(outputPathfn_path, CostSurfacefn_path, res_array, gdal.GDT_Int32, 0)
-                # res_array[res_array > 0] = 1
-                # array2raster(outputPathfn_path1, CostSurfacefn_path, res_array, gdal.GDT_Byte, 0)
 
         array2raster(outputPathfn_path, CostSurfacefn_path, res_array, gdal.GDT_Int32, 0)
         res_array[res_array > 0] = 1
@@ -180,7 +178,7 @@ def geometry_linestring(input_dataset, Paths):
     t = map(lambda path: pixelOffset2coord(input_dataset, path[1], path[0]), Paths)
     # m = map(lambda x, y: x + y, [1, 3, 5, 7, 9], [2, 4, 6, 8, 10])
     t = LineString(list(t))
-    t = t.simplify(36)
+    t = t.simplify(simplify_distance)
     return mapping(t)
 
 
@@ -271,4 +269,7 @@ def createPath(CostSurfacefn, costSurfaceArray, startCoord, endCoord):
 if __name__ == "__main__":
     gdal.AllRegister()
     gdal.UseExceptions()
-    main()
+    # main()
+
+    input_dataset = gdal.Open("data/2018输入数据2.tif")
+    jsonlines2shapefile(input_dataset, "D:/MSPA/res/result.jsonl")
